@@ -26,3 +26,5 @@ process.on('SIGINT', () => {
     console.log('HTTP server closed');
   });
 });
+
+// Triggering nodemon restart
