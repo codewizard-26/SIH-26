@@ -1,8 +1,15 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { createInspection, uploadImages, runAnalysis } from '../features/inspections/inspectionSlice';
 import api from '../services/api';
+import CameraScannerModal from '../components/common/CameraScannerModal';
+import {
+  saveDraftImage,
+  loadDraftImages,
+  removeDraftImage,
+  clearAllDraftImages,
+} from '../utils/imageStorage';
 import {
   Upload,
   Camera,
@@ -19,6 +26,7 @@ import {
   FileText,
   PhoneCall,
   RotateCw,
+  ScanLine,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -144,35 +152,34 @@ export default function NewInspection() {
   // Extra optional images list
   const [extraImages, setExtraImages] = useState([]);
 
-  // Active slot tracking for hidden inputs
-  const [targetSlot, setTargetSlot] = useState('front');
+  // In-app camera scanner modal state
+  const [activeCameraModal, setActiveCameraModal] = useState(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [currentStep, setCurrentStep] = useState('');
   const [formError, setFormError] = useState(null);
 
-  const fileInputRef = useRef(null);
-  const cameraInputRef = useRef(null);
-  const extraFileInputRef = useRef(null);
-  const extraCameraInputRef = useRef(null);
+  // Restore draft images from IndexedDB on mount (protects against Android tab reloads)
+  useEffect(() => {
+    let isMounted = true;
+    loadDraftImages().then((draft) => {
+      if (!isMounted) return;
+      if (draft.slots && Object.keys(draft.slots).length > 0) {
+        setSlotImages((prev) => ({ ...prev, ...draft.slots }));
+      }
+      if (draft.extras && draft.extras.length > 0) {
+        setExtraImages(draft.extras);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
-  // Trigger file or camera for a specific slot
-  const openSlotFile = (slotKey) => {
-    setTargetSlot(slotKey);
-    fileInputRef.current?.click();
-  };
-
-  const openSlotCamera = (slotKey) => {
-    setTargetSlot(slotKey);
-    cameraInputRef.current?.click();
-  };
-
-  // Handle slot file selection
-  const handleSlotFileChange = async (e) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const rawFile = e.target.files[0];
-    if (!rawFile.type.startsWith('image/')) return;
+  // Handle single slot photo capture or upload
+  const handleCaptureSlot = async (slotKey, rawFile) => {
+    if (!rawFile || !rawFile.type.startsWith('image/')) return;
 
     setIsCompressing(true);
     setFormError(null);
@@ -182,32 +189,33 @@ export default function NewInspection() {
       const previewUrl = URL.createObjectURL(compressed);
 
       setSlotImages((prev) => {
-        // Revoke old URL if replaced
-        if (prev[targetSlot] && prev[targetSlot].previewUrl) {
-          URL.revokeObjectURL(prev[targetSlot].previewUrl);
+        if (prev[slotKey]?.previewUrl) {
+          URL.revokeObjectURL(prev[slotKey].previewUrl);
         }
         return {
           ...prev,
-          [targetSlot]: {
-            id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          [slotKey]: {
+            id: `${Date.now()}-${slotKey}`,
             file: compressed,
-            viewType: targetSlot,
+            viewType: slotKey,
             previewUrl,
           },
         };
       });
+
+      // Save to IndexedDB so page reload does not lose photo
+      saveDraftImage(slotKey, compressed);
     } catch (err) {
-      console.error('Image compression error:', err);
-      setFormError('Could not process image. Please try another.');
+      console.error('Slot photo error:', err);
+      setFormError('Could not process photo. Please try again.');
     } finally {
       setIsCompressing(false);
-      e.target.value = '';
     }
   };
 
   const removeSlotImage = (slotKey) => {
     setSlotImages((prev) => {
-      if (prev[slotKey] && prev[slotKey].previewUrl) {
+      if (prev[slotKey]?.previewUrl) {
         URL.revokeObjectURL(prev[slotKey].previewUrl);
       }
       return {
@@ -215,44 +223,54 @@ export default function NewInspection() {
         [slotKey]: null,
       };
     });
+    removeDraftImage(slotKey);
   };
 
-  // Handle extra images
-  const handleExtraFileChange = async (e) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const rawFiles = Array.from(e.target.files).filter((f) => f.type.startsWith('image/'));
-    if (rawFiles.length === 0) return;
+  // Handle extra evidence images
+  const handleAddExtraFile = async (rawFile) => {
+    if (!rawFile || !rawFile.type.startsWith('image/')) return;
 
     setIsCompressing(true);
     setFormError(null);
 
     try {
-      const compressedList = await Promise.all(rawFiles.map((f) => compressImage(f)));
-      const newExtras = compressedList.map((file) => ({
-        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-        file,
+      const compressed = await compressImage(rawFile);
+      const id = `extra_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const newImg = {
+        id,
+        file: compressed,
         viewType: 'evidence',
-        previewUrl: URL.createObjectURL(file),
-      }));
+        previewUrl: URL.createObjectURL(compressed),
+      };
 
-      setExtraImages((prev) => [...prev, ...newExtras]);
+      setExtraImages((prev) => [...prev, newImg]);
+      saveDraftImage(id, compressed);
     } catch (err) {
       console.error('Extra image error:', err);
-      setFormError('Failed to process extra images.');
+      setFormError('Failed to process extra image.');
     } finally {
       setIsCompressing(false);
-      e.target.value = '';
     }
+  };
+
+  const handleAddMultipleExtraFiles = async (e) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const files = Array.from(e.target.files).filter((f) => f.type.startsWith('image/'));
+    for (const f of files) {
+      await handleAddExtraFile(f);
+    }
+    e.target.value = '';
   };
 
   const removeExtraImage = (id) => {
     setExtraImages((prev) => {
       const img = prev.find((i) => i.id === id);
-      if (img && img.previewUrl) {
+      if (img?.previewUrl) {
         URL.revokeObjectURL(img.previewUrl);
       }
       return prev.filter((i) => i.id !== id);
     });
+    removeDraftImage(id);
   };
 
   // Consolidate all uploaded surfaces
@@ -306,6 +324,9 @@ export default function NewInspection() {
       setCurrentStep('Extracting product name, MRP & declarations via OCR & Legal Metrology Rules...');
       await dispatch(runAnalysis(inspectionId)).unwrap();
 
+      // Clear draft storage on successful analysis
+      await clearAllDraftImages();
+
       // Step 4: Navigate to detailed results
       navigate(`/inspections/${inspectionId}`);
     } catch (err) {
@@ -331,44 +352,22 @@ export default function NewInspection() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-16">
-      {/* Hidden slot file & camera inputs */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleSlotFileChange}
-        disabled={isProcessing || isCompressing}
-        className="hidden"
-      />
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleSlotFileChange}
-        disabled={isProcessing || isCompressing}
-        className="hidden"
-      />
-
-      {/* Hidden extra file & camera inputs */}
-      <input
-        ref={extraFileInputRef}
-        type="file"
-        multiple
-        accept="image/*"
-        onChange={handleExtraFileChange}
-        disabled={isProcessing || isCompressing}
-        className="hidden"
-      />
-      <input
-        ref={extraCameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleExtraFileChange}
-        disabled={isProcessing || isCompressing}
-        className="hidden"
-      />
+      {/* Live In-App Camera Scanner Modal */}
+      {activeCameraModal && (
+        <CameraScannerModal
+          isOpen={!!activeCameraModal}
+          slotKey={activeCameraModal.slotKey}
+          slotLabel={activeCameraModal.label}
+          onClose={() => setActiveCameraModal(null)}
+          onCapture={(file) => {
+            if (activeCameraModal.slotKey === 'extra') {
+              handleAddExtraFile(file);
+            } else {
+              handleCaptureSlot(activeCameraModal.slotKey, file);
+            }
+          }}
+        />
+      )}
 
       {/* Header */}
       <div>
@@ -455,7 +454,7 @@ export default function NewInspection() {
                 {isCompressing ? 'Preparing Mobile Photos...' : 'Analyzing Legal Metrology Compliance...'}
               </p>
               <p className="text-xs text-slate-500 mt-0.5 truncate">
-                {isCompressing ? 'Compressing photos for fast OCR extraction' : currentStep}
+                {isCompressing ? 'Optimizing photo for fast cloud OCR' : currentStep}
               </p>
             </div>
           </div>
@@ -473,7 +472,7 @@ export default function NewInspection() {
               Package Surface Capture Checklist
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Upload the designated panels below. The system automatically extracts product name, MRP, and statutory rules.
+              Upload designated package sides. Photos are auto-saved locally so reloads will not lose your progress.
             </p>
           </div>
           <div className="flex items-center gap-2 self-start sm:self-center">
@@ -488,6 +487,8 @@ export default function NewInspection() {
           {SURFACE_SLOTS.map((slot) => {
             const SlotIcon = slot.icon;
             const captured = slotImages[slot.key];
+            const fileInputId = `slot-file-${slot.key}`;
+            const cameraInputId = `slot-camera-${slot.key}`;
 
             return (
               <div
@@ -498,6 +499,31 @@ export default function NewInspection() {
                     : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
                 }`}
               >
+                {/* Dedicated Hidden Inputs for this specific slot */}
+                <input
+                  id={fileInputId}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    handleCaptureSlot(slot.key, e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                  disabled={isProcessing || isCompressing}
+                  className="hidden"
+                />
+                <input
+                  id={cameraInputId}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => {
+                    handleCaptureSlot(slot.key, e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                  disabled={isProcessing || isCompressing}
+                  className="hidden"
+                />
+
                 {/* Slot Title & Badge */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5">
@@ -552,7 +578,7 @@ export default function NewInspection() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => openSlotCamera(slot.key)}
+                          onClick={() => setActiveCameraModal({ slotKey: slot.key, label: slot.label })}
                           disabled={isProcessing || isCompressing}
                           className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-md border border-slate-200 transition text-[11px] flex items-center gap-1"
                           title="Retake photo"
@@ -579,20 +605,20 @@ export default function NewInspection() {
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        onClick={() => openSlotCamera(slot.key)}
+                        onClick={() => setActiveCameraModal({ slotKey: slot.key, label: slot.label })}
                         disabled={isProcessing || isCompressing}
-                        className="px-3 py-2 bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 shadow-sm transition flex items-center justify-center gap-1.5 min-h-[40px] disabled:opacity-50"
+                        className="px-3 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-semibold rounded-lg shadow-sm transition flex items-center justify-center gap-1.5 min-h-[40px] disabled:opacity-50"
                       >
-                        <Camera className="w-3.5 h-3.5 text-slate-600" />
-                        Take Photo
+                        <ScanLine className="w-3.5 h-3.5" />
+                        Live Scanner
                       </button>
                       <button
                         type="button"
-                        onClick={() => openSlotFile(slot.key)}
+                        onClick={() => document.getElementById(fileInputId)?.click()}
                         disabled={isProcessing || isCompressing}
-                        className="px-3 py-2 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 text-blue-700 text-xs font-semibold rounded-lg border border-blue-200 transition flex items-center justify-center gap-1.5 min-h-[40px] disabled:opacity-50"
+                        className="px-3 py-2 bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 shadow-sm transition flex items-center justify-center gap-1.5 min-h-[40px] disabled:opacity-50"
                       >
-                        <Upload className="w-3.5 h-3.5" />
+                        <Upload className="w-3.5 h-3.5 text-slate-600" />
                         Choose File
                       </button>
                     </div>
@@ -605,6 +631,17 @@ export default function NewInspection() {
 
         {/* 5th Slot: Extra Evidence Images (Optional) */}
         <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
+          {/* Hidden inputs for extra images */}
+          <input
+            id="extra-file-input"
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={handleAddMultipleExtraFiles}
+            disabled={isProcessing || isCompressing}
+            className="hidden"
+          />
+
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
@@ -620,15 +657,15 @@ export default function NewInspection() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => extraCameraInputRef.current?.click()}
+                onClick={() => setActiveCameraModal({ slotKey: 'extra', label: 'Extra Evidence' })}
                 disabled={isProcessing || isCompressing}
                 className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 shadow-sm transition flex items-center gap-1 min-h-[34px]"
               >
-                <Camera className="w-3.5 h-3.5" /> Camera
+                <Camera className="w-3.5 h-3.5" /> Scanner
               </button>
               <button
                 type="button"
-                onClick={() => extraFileInputRef.current?.click()}
+                onClick={() => document.getElementById('extra-file-input')?.click()}
                 disabled={isProcessing || isCompressing}
                 className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition flex items-center gap-1 min-h-[34px]"
               >
@@ -675,7 +712,10 @@ export default function NewInspection() {
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
         <button
           type="button"
-          onClick={() => navigate('/')}
+          onClick={async () => {
+            await clearAllDraftImages();
+            navigate('/');
+          }}
           disabled={isProcessing || isCompressing}
           className="px-5 py-3 border border-slate-300 text-slate-700 font-medium text-sm rounded-xl hover:bg-slate-100 transition text-center order-2 sm:order-1"
         >
