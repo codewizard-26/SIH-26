@@ -18,8 +18,8 @@ export const overallStatuses = [
 ];
 
 export const inspectionCreateSchema = z.object({
-  productName: z.string().trim().min(2, 'Product name must be at least 2 characters').max(255),
-  category: z.string().trim().min(1, 'Category is required'),
+  productName: z.string().trim().max(255).optional().default('Automated Scan Package').transform((val) => val && val.length >= 2 ? val : 'Automated Scan Package'),
+  category: z.string().trim().optional().default('General Packaged Commodity').transform((val) => val && val.length >= 1 ? val : 'General Packaged Commodity'),
   brand: z.string().trim().max(255).optional().default(''),
   manufacturerName: z.string().trim().max(255).optional().default(''),
   productId: z.string().uuid().optional(),

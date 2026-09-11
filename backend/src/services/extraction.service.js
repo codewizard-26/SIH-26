@@ -363,7 +363,7 @@ const extractConsumerCare = (lines, fullText, fullTextLower) => {
 };
 
 /**
- * Extract Generic / Common Commodity Name (Rule 6(1)(b)) using ML model
+ * Extract Generic / Common Commodity Name (Rule 6(1)(b)) using ML model & OCR layout analysis
  */
 const extractGenericName = (mlClassifications, allLines, fullTextLower) => {
   let candidate = null;
@@ -371,40 +371,113 @@ const extractGenericName = (mlClassifications, allLines, fullTextLower) => {
   let boundingBox = null;
   let sourceImageId = null;
 
-  // Utilize the custom ML Model's classification
-  if (mlClassifications && mlClassifications.PRODUCT_NAME && mlClassifications.PRODUCT_NAME.length > 0) {
-    const bestMatch = mlClassifications.PRODUCT_NAME[0];
-    candidate = bestMatch.text;
-    confidence = Math.max(0.7, bestMatch.mlConfidence);
-    boundingBox = bestMatch.bbox;
-    sourceImageId = bestMatch.imageId;
-  } else if (allLines && allLines.length > 0) {
-    // Fallback: Pick the most confident prominent line
-    const nonMetaLines = allLines.filter((l) => {
+  // 1. Check for explicit statutory label patterns in all lines
+  // e.g. "Generic Name: Roasted Almonds", "PRODUCT: EDIBLE ROASTED ALMONDS", "Commodity: Shampoo"
+  const labelPatterns = [
+    /(?:GENERIC\s*NAME|NAME\s*OF\s*(?:THE\s*)?COMMODITY|COMMODITY|PRODUCT\s*NAME|PRODUCT|ITEM)\s*[:.-]\s*([^\n\r;]{3,80})/i,
+  ];
+
+  for (const line of allLines) {
+    for (const pattern of labelPatterns) {
+      const match = line.text.match(pattern);
+      if (match && match[1]) {
+        const cleaned = match[1].replace(/[:\-—,;]+$/, '').trim();
+        const lower = cleaned.toLowerCase();
+        if (
+          cleaned.length >= 3 &&
+          !lower.includes('mrp') &&
+          !lower.includes('net') &&
+          !lower.includes('tax') &&
+          !lower.includes('mfg')
+        ) {
+          candidate = cleaned;
+          confidence = 0.95;
+          boundingBox = line.bbox;
+          sourceImageId = line.imageId;
+          break;
+        }
+      }
+    }
+    if (candidate) break;
+  }
+
+  // 2. Prioritize Front Panel (PDP) prominent lines
+  if (!candidate && allLines && allLines.length > 0) {
+    const frontLines = allLines.filter((l) => l.viewType === 'front');
+    const targetLines = frontLines.length > 0 ? frontLines : allLines;
+
+    // Filter out common non-product lines (metadata, dates, numbers, legal disclaimers)
+    const candidateLines = targetLines.filter((l) => {
       const lower = l.text.toLowerCase();
       return (
-        l.text.length > 3 &&
+        l.text.length >= 3 &&
+        l.text.length <= 60 &&
+        !/^[\d.\-\/\s]+$/.test(l.text) && // Not just numbers/dates
         !lower.includes('mrp') &&
-        !lower.includes('mfg') &&
-        !lower.includes('batch') &&
+        !lower.includes('₹') &&
+        !lower.includes('rs.') &&
+        !lower.includes('price') &&
+        !lower.includes('tax') &&
+        !lower.includes('net') &&
+        !lower.includes('qty') &&
         !lower.includes('weight') &&
-        !lower.includes('tax')
+        !lower.includes('mfg') &&
+        !lower.includes('pkd') &&
+        !lower.includes('exp') &&
+        !lower.includes('date') &&
+        !lower.includes('batch') &&
+        !lower.includes('lot') &&
+        !lower.includes('fssai') &&
+        !lower.includes('lic') &&
+        !lower.includes('customer') &&
+        !lower.includes('consumer') &&
+        !lower.includes('helpline') &&
+        !lower.includes('email') &&
+        !lower.includes('care') &&
+        !lower.includes('feedback') &&
+        !lower.includes('manufactured') &&
+        !lower.includes('packed') &&
+        !lower.includes('marketed') &&
+        !lower.includes('address') &&
+        !lower.includes('ingredients') &&
+        !lower.includes('nutrition') &&
+        !lower.includes('serving') &&
+        !lower.includes('keep in') &&
+        !lower.includes('best before')
       );
     });
 
-    if (nonMetaLines.length > 0) {
-      candidate = nonMetaLines[0].text;
-      boundingBox = nonMetaLines[0].bbox;
-      sourceImageId = nonMetaLines[0].imageId;
+    if (candidateLines.length > 0) {
+      candidate = candidateLines[0].text.replace(/[:\-—,;]+$/, '').trim();
+      boundingBox = candidateLines[0].bbox;
+      sourceImageId = candidateLines[0].imageId;
+      confidence = 0.85;
     }
+  }
+
+  // 3. Fallback to custom ML Model classification
+  if (!candidate && mlClassifications && mlClassifications.PRODUCT_NAME && mlClassifications.PRODUCT_NAME.length > 0) {
+    const bestMatch = mlClassifications.PRODUCT_NAME[0];
+    candidate = bestMatch.text.replace(/[:\-—,;]+$/, '').trim();
+    confidence = Math.max(0.7, bestMatch.mlConfidence);
+    boundingBox = bestMatch.bbox;
+    sourceImageId = bestMatch.imageId;
+  }
+
+  // Clean candidate formatting
+  if (candidate) {
+    candidate = candidate
+      .replace(/^(?:PRODUCT|GENERIC\s*NAME|COMMODITY)\s*[:.-]\s*/i, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
   }
 
   return {
     type: 'generic_name',
-    detected: candidate !== null,
+    detected: candidate !== null && candidate.length >= 2,
     value: candidate || 'Generic commodity name declared',
     confidence,
     boundingBox,
-    sourceImageId
+    sourceImageId,
   };
 };

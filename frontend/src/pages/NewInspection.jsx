@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import { useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { createInspection, uploadImages, runAnalysis } from '../features/inspections/inspectionSlice';
 import api from '../services/api';
@@ -9,12 +9,16 @@ import {
   Trash2,
   ShieldCheck,
   AlertCircle,
-  CheckCircle,
+  CheckCircle2,
   Loader2,
   Tag,
   ArrowRight,
   Plus,
-  Image as ImageIcon,
+  Sparkles,
+  Eye,
+  FileText,
+  PhoneCall,
+  RotateCw,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -26,85 +30,247 @@ const CATEGORIES = [
   'General Packaged Commodity',
 ];
 
-const VIEW_OPTIONS = [
-  { value: 'front', label: 'Front Display Panel (Principal Display Panel)' },
-  { value: 'back', label: 'Back Panel (Declarations / Nutrition / MRP)' },
-  { value: 'side', label: 'Side Panel (Manufacturing / Consumer Care)' },
-  { value: 'evidence', label: 'Close-up / Additional Evidence' },
+/**
+ * Slot definitions for guided multi-surface capture
+ */
+const SURFACE_SLOTS = [
+  {
+    key: 'front',
+    label: 'Front Display Panel (PDP)',
+    sublabel: 'Product Name, Brand Identity & Net Quantity',
+    rule: 'Rule 6(1)(b) & Rule 6(1)(c)',
+    icon: Eye,
+    recommended: true,
+    hint: 'Capture the main front face showing the commodity name clearly.',
+  },
+  {
+    key: 'back',
+    label: 'Back Panel (Declarations)',
+    sublabel: 'Manufacturer Name & Address, Mfg/Packing Date',
+    rule: 'Rule 6(1)(a) & Rule 6(1)(d)',
+    icon: FileText,
+    recommended: true,
+    hint: 'Capture the declaration text box, ingredients, and manufacturer info.',
+  },
+  {
+    key: 'side',
+    label: 'Side Panel (Consumer Care)',
+    sublabel: 'Helpline No., Email ID, Postal Address & Redressal',
+    rule: 'Rule 6(2)',
+    icon: PhoneCall,
+    recommended: false,
+    hint: 'Capture customer support telephone, email, and grievance contact.',
+  },
+  {
+    key: 'mrp',
+    label: 'MRP & Batch Label (Close-Up)',
+    sublabel: 'Retail Price (incl. of all taxes), Unit Sale Price & Batch No.',
+    rule: 'Rule 6(1)(e) & Rule 2(m)',
+    icon: Tag,
+    recommended: true,
+    hint: 'Close-up macro photo of the stamped or printed MRP area.',
+  },
 ];
+
+/**
+ * Client-side image compression to prevent mobile tab crash on high-res camera photos
+ */
+const compressImage = (file, maxWidth = 1600, quality = 0.85) => {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith('image/') || file.type.includes('svg')) {
+      return resolve(file);
+    }
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        if (img.width <= maxWidth && img.height <= maxWidth && file.size < 1.5 * 1024 * 1024) {
+          return resolve(file);
+        }
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxWidth) {
+            width = Math.round((width * maxWidth) / height);
+            height = maxWidth;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, '') + '.jpg', {
+                type: 'image/jpeg',
+                lastModified: Date.now(),
+              });
+              resolve(compressedFile);
+            } else {
+              resolve(file);
+            }
+          },
+          'image/jpeg',
+          quality
+        );
+      };
+      img.onerror = () => resolve(file);
+    };
+    reader.onerror = () => resolve(file);
+  });
+};
 
 export default function NewInspection() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  const [formData, setFormData] = useState({
-    productName: '',
-    category: CATEGORIES[0],
-    brand: '',
-    manufacturerName: '',
-    inspectorName: 'Inspector (Legal Metrology HQ)',
-    notes: '',
+  // Slots state: front, back, side, mrp
+  const [slotImages, setSlotImages] = useState({
+    front: null,
+    back: null,
+    side: null,
+    mrp: null,
   });
 
-  // Selected image files with assigned view types and preview URLs
-  const [images, setImages] = useState([]);
+  // Extra optional images list
+  const [extraImages, setExtraImages] = useState([]);
+
+  // Active slot tracking for hidden inputs
+  const [targetSlot, setTargetSlot] = useState('front');
+
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [currentStep, setCurrentStep] = useState(''); // 'creating', 'uploading', 'analyzing'
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [currentStep, setCurrentStep] = useState('');
   const [formError, setFormError] = useState(null);
 
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const extraFileInputRef = useRef(null);
+  const extraCameraInputRef = useRef(null);
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+  // Trigger file or camera for a specific slot
+  const openSlotFile = (slotKey) => {
+    setTargetSlot(slotKey);
+    fileInputRef.current?.click();
   };
 
-  const handleFiles = (fileList) => {
-    const selectedFiles = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
-    if (selectedFiles.length === 0) return;
+  const openSlotCamera = (slotKey) => {
+    setTargetSlot(slotKey);
+    cameraInputRef.current?.click();
+  };
 
-    const newImages = selectedFiles.map((file, idx) => {
-      // Auto-assign view based on existing count
-      const totalSoFar = images.length + idx;
-      let defaultView = 'front';
-      if (totalSoFar === 1) defaultView = 'back';
-      else if (totalSoFar >= 2) defaultView = 'side';
+  // Handle slot file selection
+  const handleSlotFileChange = async (e) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const rawFile = e.target.files[0];
+    if (!rawFile.type.startsWith('image/')) return;
 
-      return {
-        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-        file,
-        viewType: defaultView,
-        previewUrl: URL.createObjectURL(file),
-      };
-    });
-
-    setImages((prev) => [...prev, ...newImages]);
+    setIsCompressing(true);
     setFormError(null);
-  };
 
-  const handleFileChange = (e) => {
-    if (e.target.files) {
-      handleFiles(e.target.files);
-      e.target.value = ''; // Reset input so same file can be re-selected if needed
+    try {
+      const compressed = await compressImage(rawFile);
+      const previewUrl = URL.createObjectURL(compressed);
+
+      setSlotImages((prev) => {
+        // Revoke old URL if replaced
+        if (prev[targetSlot] && prev[targetSlot].previewUrl) {
+          URL.revokeObjectURL(prev[targetSlot].previewUrl);
+        }
+        return {
+          ...prev,
+          [targetSlot]: {
+            id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            file: compressed,
+            viewType: targetSlot,
+            previewUrl,
+          },
+        };
+      });
+    } catch (err) {
+      console.error('Image compression error:', err);
+      setFormError('Could not process image. Please try another.');
+    } finally {
+      setIsCompressing(false);
+      e.target.value = '';
     }
   };
 
-  const handleRemoveImage = (id) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+  const removeSlotImage = (slotKey) => {
+    setSlotImages((prev) => {
+      if (prev[slotKey] && prev[slotKey].previewUrl) {
+        URL.revokeObjectURL(prev[slotKey].previewUrl);
+      }
+      return {
+        ...prev,
+        [slotKey]: null,
+      };
+    });
   };
 
-  const handleViewTypeChange = (id, newViewType) => {
-    setImages((prev) =>
-      prev.map((img) => (img.id === id ? { ...img, viewType: newViewType } : img))
-    );
+  // Handle extra images
+  const handleExtraFileChange = async (e) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const rawFiles = Array.from(e.target.files).filter((f) => f.type.startsWith('image/'));
+    if (rawFiles.length === 0) return;
+
+    setIsCompressing(true);
+    setFormError(null);
+
+    try {
+      const compressedList = await Promise.all(rawFiles.map((f) => compressImage(f)));
+      const newExtras = compressedList.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        file,
+        viewType: 'evidence',
+        previewUrl: URL.createObjectURL(file),
+      }));
+
+      setExtraImages((prev) => [...prev, ...newExtras]);
+    } catch (err) {
+      console.error('Extra image error:', err);
+      setFormError('Failed to process extra images.');
+    } finally {
+      setIsCompressing(false);
+      e.target.value = '';
+    }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (images.length === 0) {
-      setFormError('Please upload at least one image of the product packaging (Front or Back).');
+  const removeExtraImage = (id) => {
+    setExtraImages((prev) => {
+      const img = prev.find((i) => i.id === id);
+      if (img && img.previewUrl) {
+        URL.revokeObjectURL(img.previewUrl);
+      }
+      return prev.filter((i) => i.id !== id);
+    });
+  };
+
+  // Consolidate all uploaded surfaces
+  const allImages = [
+    ...(slotImages.front ? [slotImages.front] : []),
+    ...(slotImages.back ? [slotImages.back] : []),
+    ...(slotImages.side ? [slotImages.side] : []),
+    ...(slotImages.mrp ? [slotImages.mrp] : []),
+    ...extraImages,
+  ];
+
+  const totalUploaded = allImages.length;
+  const coreSlotsCount = ['front', 'back', 'side', 'mrp'].filter((k) => slotImages[k] !== null).length;
+
+  // Run Real OCR + Rule Engine Analysis
+  const handleAnalyze = async () => {
+    if (totalUploaded === 0) {
+      setFormError('Please capture or upload at least the Front Display Panel or MRP label to proceed.');
       return;
     }
 
@@ -112,17 +278,23 @@ export default function NewInspection() {
     setFormError(null);
 
     try {
-      // Step 1: Create Inspection record
+      // Step 1: Create Inspection record (product name will be auto-extracted from Front PDP via OCR/ML)
       setCurrentStep('Initializing statutory inspection record...');
-      const created = await dispatch(createInspection(formData)).unwrap();
+      const created = await dispatch(
+        createInspection({
+          productName: 'Automated Package Scan',
+          category: CATEGORIES[0],
+          inspectorName: 'Inspector (Legal Metrology HQ)',
+        })
+      ).unwrap();
       const inspectionId = created.id;
 
-      // Step 2: Upload multiple package images with view metadata
-      setCurrentStep(`Uploading ${images.length} package image(s)...`);
+      // Step 2: Upload packaged images with accurate surface view tags
+      setCurrentStep(`Uploading ${totalUploaded} package image surfaces...`);
       const imageFormData = new FormData();
       const viewTypes = [];
 
-      images.forEach((img) => {
+      allImages.forEach((img) => {
         imageFormData.append('images', img.file);
         viewTypes.push(img.viewType);
       });
@@ -130,15 +302,15 @@ export default function NewInspection() {
 
       await dispatch(uploadImages({ inspectionId, formData: imageFormData })).unwrap();
 
-      // Step 3: Run Real OCR & Legal Metrology Compliance Rule Engine
-      setCurrentStep('Running optical character recognition & evaluating Legal Metrology Rules...');
+      // Step 3: Run Real OCR + Custom ML extraction + Rule Compliance Engine
+      setCurrentStep('Extracting product name, MRP & declarations via OCR & Legal Metrology Rules...');
       await dispatch(runAnalysis(inspectionId)).unwrap();
 
-      // Navigate to detailed results
+      // Step 4: Navigate to detailed results
       navigate(`/inspections/${inspectionId}`);
     } catch (err) {
-      console.error('Inspection creation error:', err);
-      setFormError(err.message || 'Inspection failed to complete.');
+      console.error('Analysis error:', err);
+      setFormError(err.message || 'Inspection failed. Please check network or server.');
       setIsProcessing(false);
     }
   };
@@ -146,57 +318,97 @@ export default function NewInspection() {
   const handleRunDemo = async (sampleKey) => {
     setIsProcessing(true);
     setFormError(null);
-    setCurrentStep(`Processing live OCR & Legal Metrology evaluation on preset '${sampleKey}'...`);
+    setCurrentStep(`Running live OCR & evaluation on sample '${sampleKey}'...`);
     try {
       const response = await api.post(`/samples/run-demo/${sampleKey}`);
       navigate(`/inspections/${response.data.data.id}`);
     } catch (err) {
-      console.error('Demo run error:', err);
+      console.error('Demo error:', err);
       setFormError(err.message || 'Failed to run demo sample');
       setIsProcessing(false);
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-16">
+      {/* Hidden slot file & camera inputs */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleSlotFileChange}
+        disabled={isProcessing || isCompressing}
+        className="hidden"
+      />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleSlotFileChange}
+        disabled={isProcessing || isCompressing}
+        className="hidden"
+      />
+
+      {/* Hidden extra file & camera inputs */}
+      <input
+        ref={extraFileInputRef}
+        type="file"
+        multiple
+        accept="image/*"
+        onChange={handleExtraFileChange}
+        disabled={isProcessing || isCompressing}
+        className="hidden"
+      />
+      <input
+        ref={extraCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleExtraFileChange}
+        disabled={isProcessing || isCompressing}
+        className="hidden"
+      />
+
+      {/* Header */}
       <div>
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 mb-2">
           <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Statutory Inspection Workflow</span>
+          <span>Statutory Compliance Workflow</span>
         </div>
-        <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
+        <h1 className="text-xl sm:text-3xl font-bold text-slate-900 tracking-tight">
           New Packaged Commodity Inspection
         </h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Capture or upload multi-view images of the packaged commodity for automated Legal Metrology (Packaged Commodities) Rules, 2011 compliance analysis.
+        <p className="text-xs sm:text-sm text-slate-600 mt-1">
+          Upload package surfaces (Front, Back, Side, MRP) for automated product name extraction &amp; Legal Metrology rule verification.
         </p>
       </div>
 
-      {/* 1-Click Demo Evaluation Presets for Judges/Evaluators */}
-      <div className="bg-blue-50 rounded-xl p-5 text-slate-800 shadow-md border border-blue-800 space-y-3">
+      {/* 1-Click Demo Presets */}
+      <div className="bg-blue-50/70 rounded-xl p-4 sm:p-5 text-slate-800 shadow-sm border border-blue-200 space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-bold uppercase tracking-wider text-blue-800 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 "></span>
+          <p className="text-xs font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-blue-600" />
             SIH Quick-Demo Presets (1-Click Evaluation)
           </p>
-          <span className="text-[11px] text-slate-500">Live OCR &amp; Rule Engine</span>
+          <span className="text-[11px] text-slate-500 hidden sm:inline">Pre-configured test samples</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button
             type="button"
             onClick={() => handleRunDemo('almonds-compliant')}
-            disabled={isProcessing}
-            className="p-3.5 rounded-lg bg-white hover:bg-slate-700 border border-slate-300 hover:border-emerald-500 text-left transition flex items-start justify-between group disabled:opacity-50"
+            disabled={isProcessing || isCompressing}
+            className="p-3 sm:p-3.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 hover:border-emerald-500 text-left transition flex items-start justify-between group shadow-sm disabled:opacity-50"
           >
-            <div>
-              <p className="text-xs font-bold text-slate-800 group-hover:text-emerald-700">
+            <div className="pr-2">
+              <p className="text-xs font-bold text-slate-900 group-hover:text-emerald-700">
                 Preset A: Roasted Almonds (Compliant)
               </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Food packaging with MRP, Net Qty 200g, Mfg Date, PIN code, and Consumer Care.
+              <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                Extracts name, MRP, Net Qty 200g, Mfg Date, PIN code, and Consumer Care.
               </p>
             </div>
-            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-200">
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200 flex-shrink-0">
               Run Demo →
             </span>
           </button>
@@ -204,258 +416,296 @@ export default function NewInspection() {
           <button
             type="button"
             onClick={() => handleRunDemo('shampoo-violation')}
-            disabled={isProcessing}
-            className="p-3.5 rounded-lg bg-white hover:bg-slate-700 border border-slate-300 hover:border-rose-500 text-left transition flex items-start justify-between group disabled:opacity-50"
+            disabled={isProcessing || isCompressing}
+            className="p-3 sm:p-3.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 hover:border-rose-500 text-left transition flex items-start justify-between group shadow-sm disabled:opacity-50"
           >
-            <div>
-              <p className="text-xs font-bold text-slate-800 group-hover:text-rose-700">
+            <div className="pr-2">
+              <p className="text-xs font-bold text-slate-900 group-hover:text-rose-700">
                 Preset B: Hair Cleanser (Violations)
               </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Cosmetic seizure: Net Qty "approx 250ml", MRP without taxes, no Consumer Care.
+              <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                Cosmetic seizure: Net Qty "approx 250ml", MRP without taxes, missing Consumer Care.
               </p>
             </div>
-            <span className="text-[10px] font-bold text-rose-400 bg-rose-50 text-rose-700 px-2 py-0.5 rounded border border-rose-200">
+            <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded border border-rose-200 flex-shrink-0">
               Run Demo →
             </span>
           </button>
         </div>
       </div>
 
+      {/* Error Message Banner */}
       {formError && (
-        <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold">Inspection Setup Error</p>
-            <p className="text-xs mt-0.5">{formError}</p>
+        <div className="p-3.5 sm:p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-start gap-3 animate-in fade-in">
+          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-600" />
+          <div className="min-w-0">
+            <p className="font-semibold text-xs sm:text-sm">Notice</p>
+            <p className="text-xs mt-0.5 text-rose-600">{formError}</p>
           </div>
         </div>
       )}
 
-      {isProcessing && (
-        <div className="bg-slate-50 border-slate-200 text-slate-800 rounded-xl p-6 shadow-xl border border-slate-200 space-y-4">
+      {/* Live Processing Indicator */}
+      {(isProcessing || isCompressing) && (
+        <div className="bg-white rounded-xl p-5 shadow-md border border-blue-200 space-y-3 animate-in fade-in">
           <div className="flex items-center gap-3">
-            <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
-            <div>
-              <p className="text-sm font-bold text-blue-800">Processing Compliance Scanner</p>
-              <p className="text-xs text-slate-600 mt-0.5">{currentStep}</p>
-            </div>
-          </div>
-          <div className="w-full bg-slate-100 border-slate-200 h-1.5 rounded-full overflow-hidden">
-            <div className="bg-blue-500 h-1.5 rounded-full  w-3/4"></div>
-          </div>
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-8">
-        {/* Only Image Upload Section Remains */}
-
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                Package Images Upload (Multi-Surface)
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Upload images of the Front (Principal Display Panel), Back, and Side panels for comprehensive declaration extraction.
+            <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-slate-900">
+                {isCompressing ? 'Preparing Mobile Photos...' : 'Analyzing Legal Metrology Compliance...'}
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5 truncate">
+                {isCompressing ? 'Compressing photos for fast OCR extraction' : currentStep}
               </p>
             </div>
-            <span className="text-xs font-mono font-semibold bg-slate-100 px-2.5 py-1 rounded-full text-slate-700">
-              {images.length} Image(s) Attached
+          </div>
+          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+            <div className="bg-blue-600 h-1.5 rounded-full animate-pulse w-3/4"></div>
+          </div>
+        </div>
+      )}
+
+      {/* Section Header & Progress Summary */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">
+              Package Surface Capture Checklist
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Upload the designated panels below. The system automatically extracts product name, MRP, and statutory rules.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 self-start sm:self-center">
+            <span className="text-xs font-mono font-semibold bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full border border-blue-200">
+              {coreSlotsCount}/4 Key Surfaces Captured
             </span>
           </div>
+        </div>
 
-          {/* Upload Drop Zone */}
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setIsDragging(false);
-              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                handleFiles(e.dataTransfer.files);
-              }
-            }}
-            className={`border-2 border-dashed rounded-xl p-8 text-center transition group cursor-pointer relative ${
-              isDragging
-                ? 'border-blue-500 bg-blue-50/70'
-                : 'border-slate-300 hover:border-blue-400 bg-slate-50/60'
-            }`}
-          >
-            {/* Hidden file and camera inputs */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*"
-              onChange={handleFileChange}
-              disabled={isProcessing}
-              className="hidden"
-            />
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileChange}
-              disabled={isProcessing}
-              className="hidden"
-            />
+        {/* 4 Core Guided Surface Slots */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {SURFACE_SLOTS.map((slot) => {
+            const SlotIcon = slot.icon;
+            const captured = slotImages[slot.key];
 
-            <div className="flex flex-col items-center justify-center space-y-3">
-              <div className="p-3.5 bg-blue-50 text-blue-600 rounded-full group-hover:scale-105 transition shadow-sm">
-                <Upload className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-800">
-                  Click or tap anywhere here to select package images
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Supports JPEG, PNG, WebP (up to 10MB each). Drag & drop also supported.
-                </p>
-              </div>
+            return (
+              <div
+                key={slot.key}
+                className={`rounded-xl border p-4 transition flex flex-col justify-between space-y-3 ${
+                  captured
+                    ? 'border-emerald-300 bg-emerald-50/30'
+                    : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                }`}
+              >
+                {/* Slot Title & Badge */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2.5">
+                    <div
+                      className={`p-2 rounded-lg flex-shrink-0 ${
+                        captured
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-blue-50 text-blue-600'
+                      }`}
+                    >
+                      <SlotIcon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-sm font-bold text-slate-900">{slot.label}</h3>
+                        {slot.recommended && !captured && (
+                          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                            Key
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                        {slot.sublabel}
+                      </p>
+                      <span className="inline-block text-[10px] font-mono text-slate-400 mt-0.5">
+                        {slot.rule}
+                      </span>
+                    </div>
+                  </div>
 
-              {/* Action Buttons for Mobile / Desktop convenience */}
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    fileInputRef.current?.click();
-                  }}
-                  disabled={isProcessing}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  Select Images / Files
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    cameraInputRef.current?.click();
-                  }}
-                  disabled={isProcessing}
-                  className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 shadow-sm transition flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Camera className="w-3.5 h-3.5 text-slate-600" />
-                  Take Photo / Camera
-                </button>
+                  {captured && (
+                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Captured
+                    </span>
+                  )}
+                </div>
+
+                {/* Slot Content: Uploaded Preview vs Capture Buttons */}
+                {captured ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="relative aspect-[16/9] rounded-lg overflow-hidden bg-slate-100 border border-slate-200">
+                      <img
+                        src={captured.previewUrl}
+                        alt={slot.label}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                      <p className="text-[11px] text-slate-500 truncate max-w-[180px]">
+                        {captured.file.name}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openSlotCamera(slot.key)}
+                          disabled={isProcessing || isCompressing}
+                          className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-md border border-slate-200 transition text-[11px] flex items-center gap-1"
+                          title="Retake photo"
+                        >
+                          <RotateCw className="w-3 h-3" /> Retake
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeSlotImage(slot.key)}
+                          disabled={isProcessing || isCompressing}
+                          className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-md border border-rose-200 transition text-[11px] flex items-center gap-1"
+                          title="Remove photo"
+                        >
+                          <Trash2 className="w-3 h-3" /> Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pt-2 space-y-2">
+                    <p className="text-[11px] text-slate-400 italic">
+                      {slot.hint}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openSlotCamera(slot.key)}
+                        disabled={isProcessing || isCompressing}
+                        className="px-3 py-2 bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 shadow-sm transition flex items-center justify-center gap-1.5 min-h-[40px] disabled:opacity-50"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-slate-600" />
+                        Take Photo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openSlotFile(slot.key)}
+                        disabled={isProcessing || isCompressing}
+                        className="px-3 py-2 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 text-blue-700 text-xs font-semibold rounded-lg border border-blue-200 transition flex items-center justify-center gap-1.5 min-h-[40px] disabled:opacity-50"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Choose File
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
+            );
+          })}
+        </div>
+
+        {/* 5th Slot: Extra Evidence Images (Optional) */}
+        <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                <span>Extra Images &amp; Additional Evidence (Optional)</span>
+                <span className="text-[10px] font-semibold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">
+                  Optional
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Barcodes, seals, nutritional tables, top/bottom views, or additional package sides.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => extraCameraInputRef.current?.click()}
+                disabled={isProcessing || isCompressing}
+                className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 shadow-sm transition flex items-center gap-1 min-h-[34px]"
+              >
+                <Camera className="w-3.5 h-3.5" /> Camera
+              </button>
+              <button
+                type="button"
+                onClick={() => extraFileInputRef.current?.click()}
+                disabled={isProcessing || isCompressing}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition flex items-center gap-1 min-h-[34px]"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Photos
+              </button>
             </div>
           </div>
 
-          {/* Image Previews & View Type Tagging */}
-          {images.length > 0 && (
-            <div className="space-y-3 pt-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-700">
-                  Attached Surfaces ({images.length})
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isProcessing}
-                    className="text-xs text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1 px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 transition"
-                  >
-                    <Plus className="w-3 h-3" /> Add Image
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => cameraInputRef.current?.click()}
-                    disabled={isProcessing}
-                    className="text-xs text-slate-600 hover:text-slate-800 font-semibold flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 transition"
-                  >
-                    <Camera className="w-3 h-3" /> Camera
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {images.map((img, index) => (
-                  <div
-                    key={img.id}
-                    className="bg-slate-50 rounded-xl border border-slate-200 p-3 flex flex-col justify-between space-y-3 relative group"
-                  >
-                    <div className="relative aspect-[4/3] rounded-lg overflow-hidden bg-slate-200 border border-slate-300">
-                      <img
-                        src={img.previewUrl}
-                        alt={`Package view ${index + 1}`}
-                        className="w-full h-full object-contain"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveImage(img.id)}
-                        disabled={isProcessing}
-                        className="absolute top-2 right-2 p-1.5 bg-rose-600 text-white rounded-md shadow hover:bg-rose-700 transition"
-                        title="Remove image"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="absolute bottom-2 left-2 bg-slate-800 text-white font-mono text-[10px] px-1.5 py-0.5 rounded">
-                        # {index + 1}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="block text-[11px] font-semibold text-slate-600 flex items-center gap-1">
-                        <Tag className="w-3 h-3 text-blue-500" />
-                        Label Package Surface:
-                      </label>
-                      <select
-                        value={img.viewType}
-                        onChange={(e) => handleViewTypeChange(img.id, e.target.value)}
-                        disabled={isProcessing}
-                        className="w-full text-xs py-1.5 px-2 bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                      >
-                        {VIEW_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+          {/* Extra Images Grid */}
+          {extraImages.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+              {extraImages.map((img, idx) => (
+                <div
+                  key={img.id}
+                  className="bg-white rounded-lg border border-slate-200 p-2 relative group shadow-sm"
+                >
+                  <div className="relative aspect-square rounded overflow-hidden bg-slate-100">
+                    <img
+                      src={img.previewUrl}
+                      alt={`Extra evidence ${idx + 1}`}
+                      className="w-full h-full object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeExtraImage(img.id)}
+                      disabled={isProcessing || isCompressing}
+                      className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded shadow hover:bg-rose-700 transition"
+                      title="Remove image"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   </div>
-                ))}
-              </div>
+                  <p className="text-[10px] text-slate-500 truncate mt-1">
+                    Evidence #{idx + 1}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
         </div>
+      </div>
 
-        {/* Submit Button */}
-        <div className="flex items-center justify-end gap-4 pt-4 border-t border-slate-200">
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            disabled={isProcessing}
-            className="px-5 py-2.5 border border-slate-300 text-slate-700 font-medium text-sm rounded-xl hover:bg-slate-100 transition"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isProcessing}
-            className="inline-flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold text-sm rounded-xl shadow-lg shadow-blue-500/10 transition disabled:opacity-50"
-          >
-            {isProcessing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Scanning &amp; Evaluating...
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="w-4 h-4" />
-                Analyze Compliance Now <ArrowRight className="w-4 h-4" />
-              </>
-            )}
-          </button>
-        </div>
-      </form>
+      {/* Action Buttons */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          disabled={isProcessing || isCompressing}
+          className="px-5 py-3 border border-slate-300 text-slate-700 font-medium text-sm rounded-xl hover:bg-slate-100 transition text-center order-2 sm:order-1"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={handleAnalyze}
+          disabled={isProcessing || isCompressing || totalUploaded === 0}
+          className="inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-sm sm:text-base rounded-xl shadow-md transition disabled:opacity-50 min-h-[48px] order-1 sm:order-2"
+        >
+          {isProcessing ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>Analyzing Declarations &amp; Product Name...</span>
+            </>
+          ) : (
+            <>
+              <ShieldCheck className="w-5 h-5" />
+              <span>
+                {totalUploaded === 0
+                  ? 'Capture At Least 1 Surface to Analyze'
+                  : `Analyze Compliance Now (${totalUploaded} Surfaces)`}
+              </span>
+              <ArrowRight className="w-4 h-4 hidden sm:inline" />
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 }

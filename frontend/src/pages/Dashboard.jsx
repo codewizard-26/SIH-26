@@ -78,9 +78,9 @@ export default function Dashboard() {
       </div>
 
       {/* Dynamic Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         {/* Card 1: Total Inspections */}
-        <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex items-center justify-between">
+        <div className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Inspections</p>
             <h3 className="text-3xl font-bold text-slate-900 mt-2 font-mono">{total}</h3>
@@ -94,44 +94,44 @@ export default function Dashboard() {
         </div>
 
         {/* Card 2: Compliant Products */}
-        <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex items-center justify-between">
+        <div className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Compliant Products</p>
-            <h3 className="text-3xl font-bold text-emerald-600 mt-2 font-mono">{compliant}</h3>
+            <h3 className="text-2xl sm:text-3xl font-bold text-emerald-600 mt-2 font-mono">{compliant}</h3>
             <p className="text-xs text-slate-500 mt-1">
-              {rate}% statutory compliance rate
+              {rate}% compliance rate
             </p>
           </div>
-          <div className="p-3.5 bg-emerald-50 text-emerald-600 rounded-xl">
-            <CheckCircle2 className="w-7 h-7" />
+          <div className="p-2.5 sm:p-3.5 bg-emerald-50 text-emerald-600 rounded-xl flex-shrink-0">
+            <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7" />
           </div>
         </div>
 
         {/* Card 3: Non-Compliant Products */}
-        <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex items-center justify-between">
+        <div className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-rose-700">Non-Compliant Products</p>
-            <h3 className="text-3xl font-bold text-rose-600 mt-2 font-mono">{nonCompliant}</h3>
+            <p className="text-xs font-semibold uppercase tracking-wider text-rose-700">Non-Compliant</p>
+            <h3 className="text-2xl sm:text-3xl font-bold text-rose-600 mt-2 font-mono">{nonCompliant}</h3>
             <p className="text-xs text-slate-500 mt-1">
-              Statutory violations detected
+              Violations detected
             </p>
           </div>
-          <div className="p-3.5 bg-rose-50 text-rose-600 rounded-xl">
-            <XCircle className="w-7 h-7" />
+          <div className="p-2.5 sm:p-3.5 bg-rose-50 text-rose-600 rounded-xl flex-shrink-0">
+            <XCircle className="w-6 h-6 sm:w-7 sm:h-7" />
           </div>
         </div>
 
         {/* Card 4: Manual Review Required */}
-        <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex items-center justify-between">
+        <div className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Manual Review</p>
-            <h3 className="text-3xl font-bold text-amber-600 mt-2 font-mono">{manualReview}</h3>
+            <h3 className="text-2xl sm:text-3xl font-bold text-amber-600 mt-2 font-mono">{manualReview}</h3>
             <p className="text-xs text-slate-500 mt-1">
-              e.g. Uncalibrated font measurement
+              Font inspection
             </p>
           </div>
-          <div className="p-3.5 bg-amber-50 text-amber-600 rounded-xl">
-            <AlertTriangle className="w-7 h-7" />
+          <div className="p-2.5 sm:p-3.5 bg-amber-50 text-amber-600 rounded-xl flex-shrink-0">
+            <AlertTriangle className="w-6 h-6 sm:w-7 sm:h-7" />
           </div>
         </div>
       </div>

@@ -200,6 +200,11 @@ export const runDynamicAnalysis = async (inspectionId) => {
   // Save to DB if connected
   if (db) {
     try {
+      if (inspection.productId && inspection.productName) {
+        await db.update(schema.products)
+          .set({ name: inspection.productName, updatedAt: new Date() })
+          .where(eq(schema.products.id, inspection.productId));
+      }
       await db.update(schema.inspections)
         .set({
           status: inspection.status,
