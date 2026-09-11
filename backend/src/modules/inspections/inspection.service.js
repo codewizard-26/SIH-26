@@ -4,7 +4,7 @@ import fs from 'fs';
 import { db, schema } from '../../db/index.js';
 import { eq, desc } from 'drizzle-orm';
 import * as productService from '../products/product.service.js';
-import { performOCR } from '../../services/ocr.service.js';
+import { performOCR, performBatchOCR } from '../../services/ocr.service.js';
 import { extractDeclarations } from '../../services/extraction.service.js';
 import { evaluateCompliance } from '../../services/compliance.service.js';
 import { generateInspectionReport } from '../../services/report.service.js';
@@ -151,10 +151,18 @@ export const runDynamicAnalysis = async (inspectionId) => {
 
   inspection.status = 'processing';
 
-  // 1. Perform Real OCR on all uploaded package images
+  // 1. Perform Real OCR on all uploaded package images using batch worker
+  const imageInputs = inspection.images.map((img) => ({
+    filePath: img.filePath,
+    id: img.id,
+    viewType: img.viewType,
+  }));
+
+  const ocrOutputs = await performBatchOCR(imageInputs);
+
   const ocrResults = [];
-  for (const img of inspection.images) {
-    const ocr = await performOCR(img.filePath);
+  inspection.images.forEach((img, idx) => {
+    const ocr = ocrOutputs[idx] || { fullText: '', confidence: 0, lines: [], words: [] };
     img.ocrRawData = ocr;
     img.extractedText = ocr.fullText;
 
@@ -166,7 +174,7 @@ export const runDynamicAnalysis = async (inspectionId) => {
       words: ocr.words,
       confidence: ocr.confidence,
     });
-  }
+  });
 
   // 2. Extract Declarations from OCR text and custom ML model
   const declarations = extractDeclarations(ocrResults);

@@ -5,7 +5,7 @@ const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const api = axios.create({
   baseURL,
-  timeout: 30000, // 30 seconds for heavy OCR/vision processing
+  timeout: 120000, // 120 seconds (2 minutes) for heavy cloud OCR/vision processing
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json',

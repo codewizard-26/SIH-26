@@ -6,12 +6,16 @@ export const createInspectionApi = async (inspectionData) => {
 };
 
 export const uploadInspectionImagesApi = async (inspectionId, formData) => {
-  const response = await api.post(`/inspections/${inspectionId}/images`, formData);
+  const response = await api.post(`/inspections/${inspectionId}/images`, formData, {
+    timeout: 180000, // 3 minutes for multi-image uploads
+  });
   return response.data.data;
 };
 
 export const runInspectionAnalysisApi = async (inspectionId) => {
-  const response = await api.post(`/inspections/${inspectionId}/analyze`);
+  const response = await api.post(`/inspections/${inspectionId}/analyze`, {}, {
+    timeout: 180000, // 3 minutes for deep OCR and legal metrology verification
+  });
   return response.data.data;
 };
 
