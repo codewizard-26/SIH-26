@@ -5,51 +5,54 @@ import crypto from 'crypto';
 
 class WorkerPool {
   constructor(numWorkers) {
-    this.workers = [];
+    // Limit to 2 workers max on free tiers to avoid memory issues, or os.cpus()
+    this.numWorkers = numWorkers || Math.min(2, Math.max(1, os.cpus().length - 1));
+    this.workers = new Array(this.numWorkers).fill(null);
     this.workerCallbacks = new Map(); // Maps messageId -> callback
-    this.numWorkers = numWorkers || Math.max(1, os.cpus().length - 1);
-    this.isInitialized = false;
   }
 
   init() {
-    if (this.isInitialized) return;
-    
-    // Path to the worker script
-    const workerScript = path.resolve('src/services/analysis.worker.js');
-    
-    for (let i = 0; i < this.numWorkers; i++) {
-      const worker = new Worker(workerScript);
-      
-      worker.on('message', (msg) => {
-        const { messageId, error, result } = msg;
-        if (this.workerCallbacks.has(messageId)) {
-          const { resolve, reject } = this.workerCallbacks.get(messageId);
-          this.workerCallbacks.delete(messageId);
-          
-          if (error) {
-            reject(new Error(error));
-          } else {
-            resolve(result);
-          }
-        }
-      });
-      
-      worker.on('error', (err) => {
-        console.error(`[Worker ${i}] Error:`, err);
-      });
-      
-      worker.on('exit', (code) => {
-        if (code !== 0) {
-          console.error(`[Worker ${i}] Stopped with exit code ${code}`);
-        }
-      });
+    // No-op for lazy initialization. Workers will be created on demand.
+    console.log(`[Worker Pool] Configured for up to ${this.numWorkers} lazy-loaded workers`);
+  }
 
-      this.workers.push(worker);
-      console.log(`[Worker Pool] Started Worker Node ${i} (PID: ${worker.threadId})`);
+  _getOrCreateWorker(index) {
+    if (this.workers[index]) {
+      return this.workers[index];
     }
+
+    const workerScript = path.resolve('src/services/analysis.worker.js');
+    const worker = new Worker(workerScript);
     
-    this.isInitialized = true;
-    console.log(`[Worker Pool] Initialized with ${this.numWorkers} distributed small servers`);
+    worker.on('message', (msg) => {
+      const { messageId, error, result } = msg;
+      if (this.workerCallbacks.has(messageId)) {
+        const { resolve, reject } = this.workerCallbacks.get(messageId);
+        this.workerCallbacks.delete(messageId);
+        
+        if (error) {
+          reject(new Error(error));
+        } else {
+          resolve(result);
+        }
+      }
+    });
+    
+    worker.on('error', (err) => {
+      console.error(`[Worker ${index}] Error:`, err);
+    });
+    
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        console.error(`[Worker ${index}] Stopped with exit code ${code}`);
+      }
+      this.workers[index] = null; // Clear the dead worker
+    });
+
+    this.workers[index] = worker;
+    console.log(`[Worker Pool] Started Worker Node ${index} (PID: ${worker.threadId}) ON-DEMAND`);
+    
+    return worker;
   }
 
   // Consistent hashing to assign a product (inspectionId) to a specific worker
@@ -65,7 +68,7 @@ class WorkerPool {
       this.workerCallbacks.set(messageId, { resolve, reject });
       
       const workerIndex = this._getWorkerIndex(inspectionId);
-      const worker = this.workers[workerIndex];
+      const worker = this._getOrCreateWorker(workerIndex);
       
       console.log(`[Worker Pool] Routing Product Inspection ${inspectionId} to Worker Node ${workerIndex}`);
       
@@ -80,9 +83,9 @@ class WorkerPool {
 
   shutdown() {
     for (const worker of this.workers) {
-      worker.terminate();
+      if (worker) worker.terminate();
     }
-    this.isInitialized = false;
+    this.workers.fill(null);
   }
 }
 
