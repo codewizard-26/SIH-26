@@ -614,6 +614,29 @@ export default function InspectionDetails() {
                   </td>
                 </tr>
 
+                {/* Unit Sale Price (USP) */}
+                <tr>
+                  <td className="px-6 py-4 font-semibold text-slate-900">Unit Sale Price (USP)</td>
+                  <td className="px-6 py-4 font-mono text-slate-500">Rule 6(1)(f) &amp; Rule 2(r)</td>
+                  <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                    {inspection.declarations?.unitSalePrice?.value || inspection.declarations?.unitSalePrice?.calculatedExpectedUsp || 'Not declared'}
+                  </td>
+                  <td className="px-6 py-4 font-mono">
+                    {Math.round((inspection.declarations?.unitSalePrice?.confidence || 0) * 100)}%
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full font-semibold text-[11px] ${
+                        inspection.declarations?.unitSalePrice?.detected
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-amber-50 text-amber-700'
+                      }`}
+                    >
+                      {inspection.declarations?.unitSalePrice?.detected ? 'Detected' : 'Exempt / Missing'}
+                    </span>
+                  </td>
+                </tr>
+
                 {/* Net Quantity */}
                 <tr>
                   <td className="px-6 py-4 font-semibold text-slate-900">Net Quantity</td>
@@ -660,6 +683,29 @@ export default function InspectionDetails() {
                   </td>
                 </tr>
 
+                {/* Batch / Lot Number */}
+                <tr>
+                  <td className="px-6 py-4 font-semibold text-slate-900">Batch / Lot / Code No.</td>
+                  <td className="px-6 py-4 font-mono text-slate-500">Rule 6(1)(g)</td>
+                  <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                    {inspection.declarations?.batchNumber?.value || 'Not detected'}
+                  </td>
+                  <td className="px-6 py-4 font-mono">
+                    {Math.round((inspection.declarations?.batchNumber?.confidence || 0) * 100)}%
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full font-semibold text-[11px] ${
+                        inspection.declarations?.batchNumber?.detected
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-rose-50 text-rose-700'
+                      }`}
+                    >
+                      {inspection.declarations?.batchNumber?.detected ? 'Detected' : 'Missing'}
+                    </span>
+                  </td>
+                </tr>
+
                 {/* Manufacturer */}
                 <tr>
                   <td className="px-6 py-4 font-semibold text-slate-900">Manufacturer / Packer Details</td>
@@ -679,6 +725,29 @@ export default function InspectionDetails() {
                       }`}
                     >
                       {inspection.declarations?.manufacturer?.detected ? 'Detected' : 'Missing'}
+                    </span>
+                  </td>
+                </tr>
+
+                {/* Country of Origin */}
+                <tr>
+                  <td className="px-6 py-4 font-semibold text-slate-900">Country of Origin</td>
+                  <td className="px-6 py-4 font-mono text-slate-500">Rule 6(10)</td>
+                  <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                    {inspection.declarations?.countryOfOrigin?.value || 'Not detected'}
+                  </td>
+                  <td className="px-6 py-4 font-mono">
+                    {Math.round((inspection.declarations?.countryOfOrigin?.confidence || 0) * 100)}%
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full font-semibold text-[11px] ${
+                        inspection.declarations?.countryOfOrigin?.detected
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-rose-50 text-rose-700'
+                      }`}
+                    >
+                      {inspection.declarations?.countryOfOrigin?.detected ? 'Detected' : 'Missing'}
                     </span>
                   </td>
                 </tr>

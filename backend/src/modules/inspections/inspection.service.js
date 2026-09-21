@@ -4,10 +4,8 @@ import fs from 'fs';
 import { db, schema } from '../../db/index.js';
 import { eq, desc } from 'drizzle-orm';
 import * as productService from '../products/product.service.js';
-import { performOCR, performBatchOCR } from '../../services/ocr.service.js';
-import { extractDeclarations } from '../../services/extraction.service.js';
-import { evaluateCompliance } from '../../services/compliance.service.js';
 import { generateInspectionReport } from '../../services/report.service.js';
+import { workerPool } from '../../services/worker_pool.js';
 import { env } from '../../config/env.js';
 
 // Dynamic in-memory store fallback when PostgreSQL is not configured
@@ -151,59 +149,43 @@ export const runDynamicAnalysis = async (inspectionId) => {
 
   inspection.status = 'processing';
 
-  // 1. Perform Real OCR on all uploaded package images using batch worker
-  const imageInputs = inspection.images.map((img) => ({
-    filePath: img.filePath,
-    id: img.id,
-    viewType: img.viewType,
-  }));
-
-  const ocrOutputs = await performBatchOCR(imageInputs);
-
-  const ocrResults = [];
-  inspection.images.forEach((img, idx) => {
-    const ocr = ocrOutputs[idx] || { fullText: '', confidence: 0, lines: [], words: [] };
-    img.ocrRawData = ocr;
-    img.extractedText = ocr.fullText;
-
-    ocrResults.push({
-      imageId: img.id,
-      viewType: img.viewType,
-      fullText: ocr.fullText,
-      lines: ocr.lines,
-      words: ocr.words,
-      confidence: ocr.confidence,
+  // Delegate heavy CPU OCR and ML extraction to the Worker Pool
+  try {
+    const processedResult = await workerPool.analyzeInspection(inspectionId, inspection);
+    
+    // Merge the processed result back into the main inspection object
+    const { ocrResults, updatedImages, declarations, productName, complianceResult } = processedResult;
+    
+    // Update images with corrected view types and OCR data
+    inspection.images.forEach(img => {
+      const updatedImg = updatedImages.find(u => u.id === img.id);
+      if (updatedImg) {
+        img.viewType = updatedImg.viewType;
+        img.ocrRawData = updatedImg.ocrRawData;
+        img.extractedText = updatedImg.extractedText;
+      }
     });
-  });
 
-  // 2. Extract Declarations from OCR text and custom ML model
-  const declarations = extractDeclarations(ocrResults);
-  inspection.declarations = declarations;
-
-  // If the custom ML model extracted a generic product name from the image, update the inspection record
-  if (declarations.genericName && declarations.genericName.detected && declarations.genericName.value) {
-    inspection.productName = declarations.genericName.value;
+    inspection.declarations = declarations;
+    inspection.productName = productName;
+    
+    // Update inspection with real analysis results
+    inspection.status = 'analyzed';
+    inspection.overallStatus = complianceResult.overallStatus;
+    inspection.complianceScore = complianceResult.complianceScore;
+    inspection.complianceChecks = complianceResult.checks;
+    inspection.violations = complianceResult.violations;
+    inspection.manualChecks = complianceResult.manualChecks;
+    inspection.passedChecksCount = complianceResult.passedChecksCount;
+    inspection.failedChecksCount = complianceResult.failedChecksCount;
+    inspection.manualChecksCount = complianceResult.manualChecksCount;
+    inspection.updatedAt = new Date().toISOString();
+  } catch (workerError) {
+    console.error(`[Worker Error] Failed to process inspection ${inspectionId}:`, workerError);
+    inspection.status = 'failed';
+    inspection.notes = `Analysis failed: ${workerError.message}`;
+    return inspection;
   }
-
-  // 3. Evaluate Compliance against Legal Metrology Rules 2011
-  const productInfo = {
-    name: inspection.productName,
-    category: inspection.category,
-    brand: inspection.brand,
-  };
-  const complianceResult = evaluateCompliance(productInfo, declarations);
-
-  // Update inspection with real analysis results
-  inspection.status = 'analyzed';
-  inspection.overallStatus = complianceResult.overallStatus;
-  inspection.complianceScore = complianceResult.complianceScore;
-  inspection.complianceChecks = complianceResult.checks;
-  inspection.violations = complianceResult.violations;
-  inspection.manualChecks = complianceResult.manualChecks;
-  inspection.passedChecksCount = complianceResult.passedChecksCount;
-  inspection.failedChecksCount = complianceResult.failedChecksCount;
-  inspection.manualChecksCount = complianceResult.manualChecksCount;
-  inspection.updatedAt = new Date().toISOString();
 
   // Save to DB if connected
   if (db) {

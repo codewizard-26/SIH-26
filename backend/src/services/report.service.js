@@ -198,6 +198,12 @@ export const generateInspectionReport = (inspection, outputPath) => {
           status: inspection.declarations?.mrp?.detected ? 'Detected' : 'Missing',
         },
         {
+          label: 'Unit Sale Price (Rule 6(1)(f))',
+          value: inspection.declarations?.unitSalePrice?.value || inspection.declarations?.unitSalePrice?.calculatedExpectedUsp || 'Not declared on packaging',
+          conf: `${Math.round((inspection.declarations?.unitSalePrice?.confidence || 0) * 100)}%`,
+          status: inspection.declarations?.unitSalePrice?.detected ? 'Detected' : 'Exempt / Missing',
+        },
+        {
           label: 'Net Quantity (Rule 6(1)(c))',
           value: inspection.declarations?.netQuantity?.value || 'Not detected on submitted packaging',
           conf: `${Math.round((inspection.declarations?.netQuantity?.confidence || 0) * 100)}%`,
@@ -208,6 +214,18 @@ export const generateInspectionReport = (inspection, outputPath) => {
           value: inspection.declarations?.manufacturingDate?.value || 'Not detected on submitted packaging',
           conf: `${Math.round((inspection.declarations?.manufacturingDate?.confidence || 0) * 100)}%`,
           status: inspection.declarations?.manufacturingDate?.detected ? 'Detected' : 'Missing',
+        },
+        {
+          label: 'Batch / Lot No. (Rule 6(1)(g))',
+          value: inspection.declarations?.batchNumber?.value || 'Not detected on packaging',
+          conf: `${Math.round((inspection.declarations?.batchNumber?.confidence || 0) * 100)}%`,
+          status: inspection.declarations?.batchNumber?.detected ? 'Detected' : 'Missing',
+        },
+        {
+          label: 'Country of Origin (Rule 6(10))',
+          value: inspection.declarations?.countryOfOrigin?.value || 'Not detected on packaging',
+          conf: `${Math.round((inspection.declarations?.countryOfOrigin?.confidence || 0) * 100)}%`,
+          status: inspection.declarations?.countryOfOrigin?.detected ? 'Detected' : 'Missing',
         },
         {
           label: 'Manufacturer (Rule 6(1)(a))',

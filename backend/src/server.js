@@ -1,7 +1,11 @@
 import app from './app.js';
 import { env } from './config/env.js';
+import { workerPool } from './services/worker_pool.js';
 
 const PORT = env.PORT || 5000;
+
+// Initialize the distributed worker pool
+workerPool.init();
 
 const server = app.listen(PORT, () => {
   console.log(`====================================================`);
