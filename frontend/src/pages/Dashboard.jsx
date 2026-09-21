@@ -78,7 +78,7 @@ export default function Dashboard() {
       </div>
 
       {/* Dynamic Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         {/* Card 1: Total Inspections */}
         <div className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm flex items-center justify-between">
           <div>

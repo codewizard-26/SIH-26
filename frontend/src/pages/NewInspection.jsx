@@ -74,6 +74,7 @@ export default function NewInspection() {
   const navigate = useNavigate();
 
   const [numProducts, setNumProducts] = useState(1);
+  const [activeTab, setActiveTab] = useState(0); // For tabbed navigation
   const [productsData, setProductsData] = useState([{
     id: 0,
     slotImages: { front: null, back: null, side: null, mrp: null },
@@ -83,6 +84,8 @@ export default function NewInspection() {
   const handleNumProductsChange = (e) => {
     const val = parseInt(e.target.value, 10);
     setNumProducts(val);
+    if (activeTab >= val) setActiveTab(Math.max(0, val - 1));
+    
     setProductsData(prev => {
       const newData = [...prev];
       if (val > prev.length) {
@@ -219,7 +222,6 @@ export default function NewInspection() {
       const analysisPromises = inspectionIds.map(id => dispatch(runAnalysis(id)).unwrap());
       await Promise.all(analysisPromises);
 
-      // Navigate to dashboard after bulk
       navigate('/');
     } catch (err) {
       console.error('Analysis error:', err);
@@ -228,8 +230,16 @@ export default function NewInspection() {
     }
   };
 
+  // Helper to check if a product has minimum images for progress badge
+  const isProductReady = (pd) => {
+    return pd.slotImages.front !== null || pd.slotImages.mrp !== null || pd.slotImages.back !== null;
+  };
+
+  // The active product being displayed
+  const activeProduct = productsData[activeTab];
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-16">
+    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-[140px] md:pb-32">
       {activeCameraModal && (
         <CameraScannerModal
           isOpen={!!activeCameraModal}
@@ -294,89 +304,124 @@ export default function NewInspection() {
         </div>
       )}
 
-      <div className="space-y-8">
-        {productsData.map((pd, pIndex) => (
-          <div key={pd.id} className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
-            <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-3">Product #{pIndex + 1}</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {SURFACE_SLOTS.map((slot) => {
-                const SlotIcon = slot.icon;
-                const captured = pd.slotImages[slot.key];
-                const fileInputId = `slot-file-${pIndex}-${slot.key}`;
-                const cameraInputId = `slot-camera-${pIndex}-${slot.key}`;
+      {/* TABS NAVIGATION */}
+      {numProducts > 1 && (
+        <div className="flex overflow-x-auto border-b border-slate-200 pb-2 space-x-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          {productsData.map((pd, index) => {
+            const isActive = activeTab === index;
+            const ready = isProductReady(pd);
+            return (
+              <button
+                key={pd.id}
+                onClick={() => setActiveTab(index)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-t-lg font-medium text-sm transition whitespace-nowrap ${
+                  isActive 
+                    ? 'bg-blue-600 text-white shadow-sm' 
+                    : 'bg-white text-slate-600 hover:bg-slate-50 border-t border-l border-r border-slate-200'
+                }`}
+              >
+                Product {index + 1}
+                {ready && (
+                  <CheckCircle2 className={`w-4 h-4 ${isActive ? 'text-blue-200' : 'text-emerald-500'}`} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-                return (
-                  <div key={slot.key} className={`rounded-xl border p-4 flex flex-col justify-between space-y-3 ${captured ? 'border-emerald-300 bg-emerald-50/30' : 'border-slate-200 bg-slate-50/50'}`}>
-                    <input id={fileInputId} type="file" accept="image/*" onChange={(e) => { handleCaptureSlot(pIndex, slot.key, e.target.files?.[0]); e.target.value = ''; }} disabled={isProcessing} className="hidden" />
-                    <input id={cameraInputId} type="file" accept="image/*" capture="environment" onChange={(e) => { handleCaptureSlot(pIndex, slot.key, e.target.files?.[0]); e.target.value = ''; }} disabled={isProcessing} className="hidden" />
-
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-start gap-2.5">
-                        <div className={`p-2 rounded-lg flex-shrink-0 ${captured ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-600'}`}><SlotIcon className="w-5 h-5" /></div>
-                        <div>
-                          <div className="flex items-center gap-1.5"><h3 className="text-sm font-bold text-slate-900">{slot.label}</h3></div>
-                          <p className="text-[11px] text-slate-500 mt-0.5">{slot.sublabel}</p>
-                        </div>
-                      </div>
-                      {captured && <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full"><CheckCircle2 className="w-3.5 h-3.5" /> Captured</span>}
-                    </div>
-
-                    {captured ? (
-                      <div className="space-y-2 pt-1">
-                        <div className="relative aspect-[16/9] rounded-lg overflow-hidden bg-slate-100 border border-slate-200">
-                          <img src={captured.previewUrl} alt={slot.label} className="w-full h-full object-contain" />
-                        </div>
-                        <div className="flex items-center justify-between pt-1">
-                          <p className="text-[11px] text-slate-500 truncate max-w-[180px]">{captured.file.name}</p>
-                          <div className="flex items-center gap-2">
-                            <button type="button" onClick={() => removeSlotImage(pIndex, slot.key)} disabled={isProcessing} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-md border border-rose-200 transition text-[11px] flex items-center gap-1"><Trash2 className="w-3 h-3" /> Remove</button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-2 pt-2">
-                        <button type="button" onClick={() => setActiveCameraModal({ productIndex: pIndex, slotKey: slot.key, label: slot.label })} disabled={isProcessing} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5"><ScanLine className="w-3.5 h-3.5" /> Live Scanner</button>
-                        <button type="button" onClick={() => document.getElementById(fileInputId)?.click()} disabled={isProcessing} className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 flex items-center justify-center gap-1.5"><Upload className="w-3.5 h-3.5 text-slate-600" /> Choose File</button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
-              <input id={`extra-file-input-${pIndex}`} type="file" multiple accept="image/*" onChange={(e) => handleAddMultipleExtraFiles(pIndex, e)} disabled={isProcessing} className="hidden" />
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><span>Extra Images (Optional)</span></h3>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => document.getElementById(`extra-file-input-${pIndex}`)?.click()} disabled={isProcessing} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> Add Photos</button>
-                </div>
-              </div>
-              {pd.extraImages.length > 0 && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-                  {pd.extraImages.map((img, idx) => (
-                    <div key={img.id} className="bg-white rounded-lg border border-slate-200 p-2 relative">
-                      <div className="relative aspect-square rounded overflow-hidden bg-slate-100">
-                        <img src={img.previewUrl} alt={`Extra ${idx}`} className="w-full h-full object-contain" />
-                        <button type="button" onClick={() => removeExtraImage(pIndex, img.id)} disabled={isProcessing} className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded"><Trash2 className="w-3 h-3" /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+      {/* ACTIVE PRODUCT UPLOAD UI */}
+      {activeProduct && (
+        <div className="bg-white rounded-b-xl rounded-tr-xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4 animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+            <h2 className="text-lg font-bold text-slate-900">
+              Product #{activeTab + 1} Capture Slots
+            </h2>
+            <span className="text-xs text-slate-500">
+              {Object.values(activeProduct.slotImages).filter(x => x !== null).length}/4 Captured
+            </span>
           </div>
-        ))}
-      </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {SURFACE_SLOTS.map((slot) => {
+              const SlotIcon = slot.icon;
+              const captured = activeProduct.slotImages[slot.key];
+              const fileInputId = `slot-file-${activeTab}-${slot.key}`;
+              const cameraInputId = `slot-camera-${activeTab}-${slot.key}`;
 
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
-        <button type="button" onClick={() => navigate('/')} disabled={isProcessing} className="px-5 py-3 border border-slate-300 text-slate-700 font-medium text-sm rounded-xl hover:bg-slate-100 text-center">Cancel</button>
-        <button type="button" onClick={handleAnalyze} disabled={isProcessing} className="inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm sm:text-base rounded-xl shadow-md disabled:opacity-50 min-h-[48px]">
-          {isProcessing ? <><Loader2 className="w-5 h-5 animate-spin" /><span>Processing {numProducts} Products...</span></> : <><ShieldCheck className="w-5 h-5" /><span>Bulk Analyze {numProducts} Products</span></>}
-        </button>
+              return (
+                <div key={slot.key} className={`rounded-xl border p-4 flex flex-col justify-between space-y-3 ${captured ? 'border-emerald-300 bg-emerald-50/30' : 'border-slate-200 bg-slate-50/50'}`}>
+                  <input id={fileInputId} type="file" accept="image/*" onChange={(e) => { handleCaptureSlot(activeTab, slot.key, e.target.files?.[0]); e.target.value = ''; }} disabled={isProcessing} className="hidden" />
+                  <input id={cameraInputId} type="file" accept="image/*" capture="environment" onChange={(e) => { handleCaptureSlot(activeTab, slot.key, e.target.files?.[0]); e.target.value = ''; }} disabled={isProcessing} className="hidden" />
+
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2.5">
+                      <div className={`p-2 rounded-lg flex-shrink-0 ${captured ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-600'}`}><SlotIcon className="w-5 h-5" /></div>
+                      <div>
+                        <div className="flex items-center gap-1.5"><h3 className="text-sm font-bold text-slate-900">{slot.label}</h3></div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{slot.sublabel}</p>
+                      </div>
+                    </div>
+                    {captured && <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full"><CheckCircle2 className="w-3.5 h-3.5" /> Captured</span>}
+                  </div>
+
+                  {captured ? (
+                    <div className="space-y-2 pt-1">
+                      <div className="relative aspect-[16/9] rounded-lg overflow-hidden bg-slate-100 border border-slate-200">
+                        <img src={captured.previewUrl} alt={slot.label} className="w-full h-full object-contain" />
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <p className="text-[11px] text-slate-500 truncate max-w-[180px]">{captured.file.name}</p>
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => removeSlotImage(activeTab, slot.key)} disabled={isProcessing} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-md border border-rose-200 transition text-[11px] flex items-center gap-1"><Trash2 className="w-3 h-3" /> Remove</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 pt-2">
+                      <button type="button" onClick={() => setActiveCameraModal({ productIndex: activeTab, slotKey: slot.key, label: slot.label })} disabled={isProcessing} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-sm"><ScanLine className="w-3.5 h-3.5" /> Live Scanner</button>
+                      <button type="button" onClick={() => document.getElementById(fileInputId)?.click()} disabled={isProcessing} className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 flex items-center justify-center gap-1.5 shadow-sm"><Upload className="w-3.5 h-3.5 text-slate-600" /> Choose File</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
+            <input id={`extra-file-input-${activeTab}`} type="file" multiple accept="image/*" onChange={(e) => handleAddMultipleExtraFiles(activeTab, e)} disabled={isProcessing} className="hidden" />
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><span>Extra Images (Optional)</span></h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => document.getElementById(`extra-file-input-${activeTab}`)?.click()} disabled={isProcessing} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1 shadow-sm"><Plus className="w-3.5 h-3.5" /> Add Photos</button>
+              </div>
+            </div>
+            {activeProduct.extraImages.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                {activeProduct.extraImages.map((img, idx) => (
+                  <div key={img.id} className="bg-white rounded-lg border border-slate-200 p-2 relative">
+                    <div className="relative aspect-square rounded overflow-hidden bg-slate-100 border border-slate-200">
+                      <img src={img.previewUrl} alt={`Extra ${idx}`} className="w-full h-full object-contain" />
+                      <button type="button" onClick={() => removeExtraImage(activeTab, img.id)} disabled={isProcessing} className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded shadow-sm hover:bg-rose-700 transition"><Trash2 className="w-3 h-3" /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* STICKY FOOTER ACTION BAR */}
+      <div className="fixed bottom-[60px] md:bottom-0 left-0 right-0 p-4 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50">
+        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <button type="button" onClick={() => navigate('/')} disabled={isProcessing} className="px-5 py-3 border border-slate-300 text-slate-700 font-medium text-sm rounded-xl hover:bg-slate-100 text-center transition">Cancel</button>
+          <button type="button" onClick={handleAnalyze} disabled={isProcessing} className="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm sm:text-base rounded-xl shadow-md disabled:opacity-50 min-h-[48px] transition">
+            {isProcessing ? <><Loader2 className="w-5 h-5 animate-spin" /><span>Processing {numProducts} Products...</span></> : <><ShieldCheck className="w-5 h-5" /><span>Bulk Analyze {numProducts} Products</span></>}
+          </button>
+        </div>
       </div>
     </div>
   );

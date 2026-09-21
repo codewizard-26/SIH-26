@@ -413,9 +413,9 @@ export default function InspectionDetails() {
 
             {/* Panel Selector */}
             {inspection.images && inspection.images.length > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500">Panel View:</span>
-                <div className="inline-flex rounded-lg border border-slate-200 p-1 bg-slate-50">
+              <div className="flex items-center gap-2 max-w-full overflow-hidden">
+                <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">Panel View:</span>
+                <div className="inline-flex overflow-x-auto rounded-lg border border-slate-200 p-1 bg-slate-50 hide-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                   {inspection.images.map((img, i) => (
                     <button
                       key={img.id || i}
